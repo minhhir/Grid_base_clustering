@@ -1,10 +1,9 @@
 import numpy as np
 import csv
 
-
+# hàm generate_mock_data tạo ra dữ liệu giả cho phân cụm bằng cách tạo ra một số lượng mẫu n_samples được phân bố xung quanh n_centers trung tâm với độ lệch chuẩn std. Nó sử dụng numpy để tạo ra các điểm dữ liệu và trả về một mảng NumPy chứa tất cả các điểm.
 def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray:
-    """Sinh dữ liệu phân cụm ngẫu nhiên bằng Numpy thuần (Local RNG)."""
-    rng = np.random.default_rng(42)  # Local state an toàn
+    rng = np.random.default_rng()
     centers = rng.uniform(-8, 8, size=(n_centers, 2))
     X_list = []
     samples_per_center = n_samples // n_centers
@@ -16,9 +15,8 @@ def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray
 
     return np.vstack(X_list)
 
-
-def load_data_from_csv(filepath: str):
-    """Đọc 2 cột dữ liệu số đầu tiên từ file CSV."""
+# ham load_data_from_csv đọc dữ liệu từ một file CSV và trả về một mảng NumPy. Nó sử dụng csv.reader để đọc từng dòng của file, cố gắng chuyển đổi các giá trị thành số thực và chỉ giữ lại hai giá trị đầu tiên của mỗi dòng nếu chúng hợp lệ. Nếu file không chứa dữ liệu số hợp lệ, nó sẽ ném ra một lỗi ValueError.
+def load_data_from_csv(filepath: str) -> np.ndarray:
     data = []
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
@@ -29,4 +27,8 @@ def load_data_from_csv(filepath: str):
                     data.append(nums[:2])
             except ValueError:
                 continue
+
+    if not data:
+        raise ValueError("File CSV rỗng hoặc không chứa dữ liệu số hợp lệ.")
+
     return np.array(data)
