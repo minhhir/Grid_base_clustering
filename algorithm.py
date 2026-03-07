@@ -4,10 +4,6 @@ import time
 
 
 class CLIQUEAlgorithm:
-    """
-    Cài đặt thuật toán CLIQUE (Grid-based Clustering).
-    """
-
     def __init__(self, X: np.ndarray, k: int, xi: int, log_callback=None):
         self.X = X
         self.k = k
@@ -91,19 +87,20 @@ class CLIQUEAlgorithm:
 
     def _assign_labels(self):
         self.log("━" * 55)
-        self.log("[Bước 4] Gán nhãn cụm cho dữ liệu...")
+        self.log("[Bước 4] Gán nhãn cụm (Vectorized)...")
         t0 = time.time()
 
-        cell_to_cluster = {cell: cid for cid, cells in enumerate(self.cluster_cells_) for cell in cells}
+        # Tạo ma trận mapping trực tiếp O(1) truy xuất
+        cluster_map = np.full((self.k, self.k), -1, dtype=int)
+        for cid, cells in enumerate(self.cluster_cells_):
+            for (ci, cj) in cells:
+                cluster_map[ci, cj] = cid
 
         ix = np.clip(np.searchsorted(self.x_edges_[1:], self.X[:, 0]), 0, self.k - 1)
         iy = np.clip(np.searchsorted(self.y_edges_[1:], self.X[:, 1]), 0, self.k - 1)
 
-        self.labels_ = np.full(len(self.X), -1, dtype=int)
-        for idx in range(len(self.X)):
-            cell = (ix[idx], iy[idx])
-            if cell in cell_to_cluster:
-                self.labels_[idx] = cell_to_cluster[cell]
+        # Gán nhãn vector hóa toàn bộ mảng thay vì lặp for
+        self.labels_ = cluster_map[ix, iy]
 
         noise_count = int(np.sum(self.labels_ == -1))
         self.log(f"   → Điểm thuộc cụm: {len(self.X) - noise_count}")

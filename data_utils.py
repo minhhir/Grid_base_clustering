@@ -3,15 +3,15 @@ import csv
 
 
 def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray:
-    """Sinh dữ liệu phân cụm ngẫu nhiên bằng Numpy thuần."""
-    np.random.seed(42)
-    centers = np.random.uniform(-8, 8, size=(n_centers, 2))
+    """Sinh dữ liệu phân cụm ngẫu nhiên bằng Numpy thuần (Local RNG)."""
+    rng = np.random.default_rng(42)  # Local state an toàn
+    centers = rng.uniform(-8, 8, size=(n_centers, 2))
     X_list = []
     samples_per_center = n_samples // n_centers
 
     for i in range(n_centers):
         n_points = samples_per_center + (1 if i < n_samples % n_centers else 0)
-        cluster_points = np.random.normal(loc=centers[i], scale=std, size=(n_points, 2))
+        cluster_points = rng.normal(loc=centers[i], scale=std, size=(n_points, 2))
         X_list.append(cluster_points)
 
     return np.vstack(X_list)
