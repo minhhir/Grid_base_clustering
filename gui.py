@@ -3,120 +3,195 @@ from tkinter import ttk, filedialog, messagebox
 import numpy as np
 import os
 import csv
+import threading
 
 import matplotlib
-
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
 import matplotlib.patches as mpatches
+import matplotlib.cm as cm
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from algorithm import CLIQUEAlgorithm
+from algorithm import CLIQUEAlgorithm, GCBDAlgorithm
 from data_utils import generate_mock_data, load_data_from_csv
 
-CLUSTER_COLORS = ["#E74C3C", "#2ECC71", "#3498DB", "#9B59B6", "#F39C12", "#1ABC9C", "#E67E22"]
+_FALLBACK_COLORS = [
+    "#E74C3C", "#2ECC71", "#3498DB", "#9B59B6",
+    "#F39C12", "#1ABC9C", "#E67E22", "#E91E63",
+    "#00BCD4", "#8BC34A",
+]
 
-#lớp GridClusteringApp được thiết kế để tạo giao diện người dùng cho phần mềm phân cụm dựa trên lưới (CLIQUE). Nó sử dụng thư viện Tkinter để xây dựng giao diện và Matplotlib để hiển thị biểu đồ. Lớp này bao gồm các phương thức để tạo giao diện, xử lý sự kiện từ người dùng, và tương tác với thuật toán CLIQUE để thực hiện phân cụm và hiển thị kết quả.
+
+def _cluster_color(cid: int, n_total: int) -> str:
+    """Màu cho cụm cid: dùng bảng cố định khi <= 10 cụm, colormap khi nhiều hơn."""
+    if n_total <= len(_FALLBACK_COLORS):
+        return _FALLBACK_COLORS[cid % len(_FALLBACK_COLORS)]
+    rgba = cm.get_cmap("tab20")(cid % 20)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(rgba[0]*255), int(rgba[1]*255), int(rgba[2]*255)
+    )
+
+
 class GridClusteringApp:
-    #hàm khởi tạo nhận vào một đối tượng Tkinter root, thiết lập tiêu đề, kích thước và màu nền cho cửa sổ chính. Nó cũng khởi tạo các biến để lưu trữ dữ liệu và mô hình phân cụm, sau đó gọi phương thức để xây dựng giao diện người dùng và tạo dữ liệu mẫu ban đầu.
+    """
+    Giao diện đồ họa hỗ trợ hai thuật toán:
+        • CLIQUE  – phân cụm dựa trên ngưỡng mật độ ô cứng (MinPts)
+        • GCBD   – phân cụm dựa trên phát hiện biên lặp (Du & Wu, 2022)
+    """
+
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Phần mềm Phân cụm Dựa trên Lưới (CLIQUE) – Đề tài 28")
-        self.root.geometry("1100x700")
+        self.root.title("Phân cụm Dựa trên Lưới – CLIQUE & GCBD  |  Đề tài 28")
+        self.root.geometry("1150x720")
         self.root.configure(bg="#2C3E50")
 
-        self.X = None
+        self.X: np.ndarray | None = None
         self.model = None
+        self._log_buffer: list[str] = []
 
         self._build_ui()
         self.cmd_generate_data()
-    #hàm _create_section tạo ra một LabelFrame với tiêu đề và kiểu dáng được định nghĩa sẵn, sau đó đóng gói nó vào bố cục của giao diện. Nó trả về đối tượng LabelFrame để có thể thêm các widget con vào đó sau này.
-    def _create_section(self, parent, title):
-        f = tk.LabelFrame(parent, text=f" {title} ", bg="#2C3E50", fg="#ECF0F1", font=("Segoe UI", 9, "bold"), bd=1,
-                          relief="groove", padx=8, pady=6)
-        f.pack(fill=tk.X, pady=(0, 8))
+
+    # ------------------------------------------------------------------
+    # UI builders
+    # ------------------------------------------------------------------
+
+    def _section(self, parent, title: str) -> tk.LabelFrame:
+        f = tk.LabelFrame(parent, text=f" {title} ", bg="#2C3E50", fg="#ECF0F1",
+                          font=("Segoe UI", 9, "bold"), bd=1, relief="groove",
+                          padx=8, pady=6)
+        f.pack(fill=tk.X, pady=(0, 7))
         return f
 
-    #hàm _create_entry tạo ra một Entry widget được liên kết với một biến Tkinter (textvariable) để người dùng có thể nhập dữ liệu. Nó cũng định dạng kiểu dáng của Entry và đóng gói nó vào bố cục.
-    def _create_entry(self, parent, var):
-        e = tk.Entry(parent, textvariable=var, bg="#34495E", fg="#ECF0F1", insertbackground="white",
-                     font=("Segoe UI", 10), bd=0, relief="flat")
-        e.pack(fill=tk.X, pady=(2, 6))
+    def _label(self, parent, text: str):
+        tk.Label(parent, text=text, bg="#2C3E50", fg="#BDC3C7",
+                 font=("Segoe UI", 8)).pack(anchor=tk.W)
 
-    #hàm _create_btn tạo ra một Button widget với văn bản, lệnh callback, màu nền và kiểu dáng được định nghĩa sẵn. Nó đóng gói nút vào bố cục và trả về đối tượng Button để có thể quản lý trạng thái của nó sau này (ví dụ: bật/tắt).
-    def _create_btn(self, parent, text, cmd, color):
-        # Trả về đối tượng Button để quản lý trạng thái Disabled/Normal
-        btn = tk.Button(parent, text=text, command=cmd, bg=color, fg="white", font=("Segoe UI", 9, "bold"), bd=0,
-                        relief="flat", activebackground="#1A6FA8", cursor="hand2", pady=6)
-        btn.pack(fill=tk.X, pady=3)
-        return btn
+    def _entry(self, parent, var) -> tk.Entry:
+        e = tk.Entry(parent, textvariable=var, bg="#34495E", fg="#ECF0F1",
+                     insertbackground="white", font=("Segoe UI", 10), bd=0, relief="flat")
+        e.pack(fill=tk.X, pady=(2, 5))
+        return e
 
-    #hàm _build_ui tạo ra cấu trúc chính của giao diện người dùng, bao gồm thanh tiêu đề, khu vực thân chính, và hai panel bên trái và bên phải. Nó gọi các phương thức phụ để xây dựng nội dung cho từng panel.
+    def _btn(self, parent, text: str, cmd, color: str) -> tk.Button:
+        b = tk.Button(parent, text=text, command=cmd, bg=color, fg="white",
+                      font=("Segoe UI", 9, "bold"), bd=0, relief="flat",
+                      activebackground="#1A6FA8", cursor="hand2", pady=6)
+        b.pack(fill=tk.X, pady=3)
+        return b
+
     def _build_ui(self):
-        title_bar = tk.Frame(self.root, bg="#1A252F", height=50)
-        title_bar.pack(fill=tk.X)
-        tk.Label(title_bar, text="  PHÂN CỤM DỰA TRÊN LƯỚI (CLIQUE)  –  Đề tài 28", bg="#1A252F", fg="#ECF0F1",
+        # Title bar
+        tb = tk.Frame(self.root, bg="#1A252F", height=50)
+        tb.pack(fill=tk.X)
+        tk.Label(tb, text="  PHÂN CỤM DỰA TRÊN LƯỚI  –  CLIQUE & GCBD  –  Đề tài 28",
+                 bg="#1A252F", fg="#ECF0F1",
                  font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=10, pady=10)
 
         body = tk.Frame(self.root, bg="#2C3E50")
         body.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
-        left = tk.Frame(body, bg="#2C3E50", width=270)
+        left = tk.Frame(body, bg="#2C3E50", width=280)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         left.pack_propagate(False)
 
         right = tk.Frame(body, bg="#2C3E50")
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self._build_left_panel(left)
-        self._build_right_panel(right)
+        self._build_left(left)
+        self._build_right(right)
 
-    #hàm _build_left_panel tạo ra các phần thông tin sinh viên, dữ liệu, tham số CLIQUE và điều khiển trong panel bên trái. Nó sử dụng các phương thức phụ để tạo các widget như Label, Entry và Button, đồng thời liên kết các nút với các phương thức xử lý sự kiện tương ứng (ví dụ: cmd_generate_data, cmd_load_csv, cmd_show_grid, cmd_run_algo, cmd_export). Nó cũng thiết lập một biến StringVar để hiển thị trạng thái hiện tại của ứng dụng.
-    def _build_left_panel(self, parent):
-        info = self._create_section(parent, "Thông tin Sinh viên")
-        for line in ["Đề tài 28: Grid-based Clustering", "Môn: Trí tuệ nhân tạo", "SV: Hoàng Năng Minh - 11236154",
-                     "Lớp: CNTT 65B"]:
-            tk.Label(info, text=line, bg="#2C3E50", fg="#F1C40F" if "Minh" in line else "#ECF0F1",
-                     font=("Segoe UI", 8, "bold" if "Minh" in line else "normal")).pack(anchor=tk.W)
+    def _build_left(self, parent):
+        # Thông tin SV
+        info = self._section(parent, "Thông tin Sinh viên")
+        for line in ["Đề tài 28: Grid-based Clustering",
+                     "Môn: Trí tuệ nhân tạo",
+                     "SV: Hoàng Năng Minh - 11236154"]:
+            tk.Label(info, text=line, bg="#2C3E50",
+                     fg="#F1C40F" if "Minh" in line else "#ECF0F1",
+                     font=("Segoe UI", 8, "bold" if "Minh" in line else "normal")
+                     ).pack(anchor=tk.W)
 
-        data_sec = self._create_section(parent, "Dữ liệu")
-        tk.Label(data_sec, text="Số điểm dữ liệu:", bg="#2C3E50", fg="#BDC3C7").pack(anchor=tk.W)
+        # Dữ liệu
+        ds = self._section(parent, "Dữ liệu")
+        self._label(ds, "Số điểm dữ liệu:")
         self.n_samples_var = tk.IntVar(value=400)
-        self._create_entry(data_sec, self.n_samples_var)
+        self._entry(ds, self.n_samples_var)
 
-        tk.Label(data_sec, text="Số cụm thực tế:", bg="#2C3E50", fg="#BDC3C7").pack(anchor=tk.W)
+        self._label(ds, "Số cụm thực tế:")
         self.n_centers_var = tk.IntVar(value=3)
-        self._create_entry(data_sec, self.n_centers_var)
+        self._entry(ds, self.n_centers_var)
 
-        self.btn_gen = self._create_btn(data_sec, "Tạo ngẫu nhiên", self.cmd_generate_data, "#27AE60")
-        self.btn_load = self._create_btn(data_sec, "Tải file CSV", self.cmd_load_csv, "#8E44AD")
+        self._label(ds, "Độ phân tán (std):")
+        self.std_var = tk.DoubleVar(value=1.2)
+        self._entry(ds, self.std_var)
 
-        param_sec = self._create_section(parent, "Tham số CLIQUE")
-        tk.Label(param_sec, text="Số ô chia mỗi trục (k):", bg="#2C3E50", fg="#BDC3C7").pack(anchor=tk.W)
+        self.btn_gen  = self._btn(ds, "Tạo ngẫu nhiên", self.cmd_generate_data, "#27AE60")
+        self.btn_load = self._btn(ds, "Tải file CSV",   self.cmd_load_csv,      "#8E44AD")
+
+        # Chọn thuật toán
+        algo_sec = self._section(parent, "Chọn thuật toán")
+        self.algo_var = tk.StringVar(value="CLIQUE")
+
+        algo_frame = tk.Frame(algo_sec, bg="#2C3E50")
+        algo_frame.pack(fill=tk.X)
+        for alg in ("CLIQUE", "GCBD"):
+            tk.Radiobutton(
+                algo_frame, text=alg, variable=self.algo_var, value=alg,
+                command=self._on_algo_change,
+                bg="#2C3E50", fg="#ECF0F1", selectcolor="#1A252F",
+                activebackground="#2C3E50", font=("Segoe UI", 9, "bold")
+            ).pack(side=tk.LEFT, padx=6, pady=2)
+
+        # Mô tả ngắn thuật toán đang chọn
+        self.algo_desc_var = tk.StringVar()
+        tk.Label(algo_sec, textvariable=self.algo_desc_var, bg="#2C3E50",
+                 fg="#95A5A6", font=("Segoe UI", 7), wraplength=240,
+                 justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
+
+        # Tham số
+        param_sec = self._section(parent, "Tham số")
+
+        # CLIQUE params
+        self.frm_clique = tk.Frame(param_sec, bg="#2C3E50")
+        self._label(self.frm_clique, "Số ô mỗi trục (k):")
         self.k_var = tk.IntVar(value=10)
-        self._create_entry(param_sec, self.k_var)
-
-        tk.Label(param_sec, text="Ngưỡng mật độ (MinPts ξ):", bg="#2C3E50", fg="#BDC3C7").pack(anchor=tk.W)
+        self._entry(self.frm_clique, self.k_var)
+        self._label(self.frm_clique, "Ngưỡng mật độ (MinPts ξ):")
         self.xi_var = tk.IntVar(value=6)
-        self._create_entry(param_sec, self.xi_var)
+        self._entry(self.frm_clique, self.xi_var)
+        self.frm_clique.pack(fill=tk.X)
 
-        ctrl_sec = self._create_section(parent, "Điều khiển")
-        self.btn_grid = self._create_btn(ctrl_sec, "Xem Lưới trung gian", self.cmd_show_grid, "#E67E22")
-        self.btn_run = self._create_btn(ctrl_sec, "Chạy Phân Cụm", self.cmd_run_algo, "#E74C3C")
-        self.btn_export = self._create_btn(ctrl_sec, "Xuất kết quả", self.cmd_export, "#7F8C8D")
+        # GCBD params
+        self.frm_gcbd = tk.Frame(param_sec, bg="#2C3E50")
+        self._label(self.frm_gcbd, "Số khoảng chia (l):")
+        self.l_var = tk.IntVar(value=20)
+        self._entry(self.frm_gcbd, self.l_var)
+        self._label(self.frm_gcbd, "Số vòng lặp phát hiện biên (T):")
+        self.T_var = tk.IntVar(value=5)
+        self._entry(self.frm_gcbd, self.T_var)
+        # frm_gcbd ẩn ban đầu
 
-        stat_sec = self._create_section(parent, "Trạng thái")
-        self.stat_text = tk.StringVar(value="Sẵn sàng.")
-        tk.Label(stat_sec, textvariable=self.stat_text, bg="#2C3E50", fg="#2ECC71", font=("Courier", 9),
-                 justify=tk.LEFT).pack(anchor=tk.W)
+        # Điều khiển
+        ctrl = self._section(parent, "Điều khiển")
+        self.btn_grid   = self._btn(ctrl, "Xem Lưới trung gian", self.cmd_show_grid, "#E67E22")
+        self.btn_run    = self._btn(ctrl, "Chạy Phân Cụm",       self.cmd_run_algo, "#E74C3C")
+        self.btn_export = self._btn(ctrl, "Xuất kết quả",         self.cmd_export,   "#7F8C8D")
 
-    #hàm _build_right_panel tạo ra một Notebook (tabbed interface) trong panel bên phải với hai tab: "Biểu đồ" để hiển thị biểu đồ phân cụm và "Nhật ký" để hiển thị các thông điệp log từ quá trình phân cụm. Nó sử dụng Matplotlib để tạo biểu đồ và một Text widget để hiển thị log, đồng thời thiết lập kiểu dáng cho các widget này để phù hợp với giao diện tổng thể của ứng dụng.
-    def _build_right_panel(self, parent):
+        # Trạng thái
+        st = self._section(parent, "Trạng thái")
+        self.stat_var = tk.StringVar(value="Sẵn sàng.")
+        tk.Label(st, textvariable=self.stat_var, bg="#2C3E50", fg="#2ECC71",
+                 font=("Courier", 9), justify=tk.LEFT).pack(anchor=tk.W)
+
+        self._on_algo_change()   # khởi tạo trạng thái panel tham số
+
+    def _build_right(self, parent):
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TNotebook", background="#2C3E50", borderwidth=0)
-        style.configure("TNotebook.Tab", background="#34495E", foreground="#ECF0F1", font=("Segoe UI", 9, "bold"),
-                        padding=[10, 4])
+        style.configure("TNotebook.Tab", background="#34495E", foreground="#ECF0F1",
+                        font=("Segoe UI", 9, "bold"), padding=[10, 4])
         style.map("TNotebook.Tab", background=[("selected", "#2980B9")])
 
         self.nb = ttk.Notebook(parent)
@@ -126,165 +201,361 @@ class GridClusteringApp:
         self.nb.add(chart_tab, text="Biểu đồ ")
 
         self.fig = Figure(figsize=(7, 5), facecolor="#1E2B38")
-        self.ax = self.fig.add_subplot(111)
+        self.ax  = self.fig.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.fig, master=chart_tab)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         log_tab = tk.Frame(self.nb, bg="#1A252F")
         self.nb.add(log_tab, text="Nhật ký ")
-        self.log_text = tk.Text(log_tab, bg="#0D1B2A", fg="#2ECC71", font=("Courier New", 9), bd=0, state=tk.DISABLED)
+        self.log_text = tk.Text(log_tab, bg="#0D1B2A", fg="#2ECC71",
+                                font=("Courier New", 9), bd=0, state=tk.DISABLED)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-    #hàm _log là một phương thức tiện ích để ghi các thông điệp log vào Text widget trong tab "Nhật ký". Nó cho phép cập nhật giao diện ngay lập tức sau khi thêm log mới, giúp người dùng theo dõi tiến trình của thuật toán phân cụm.
-    def _log(self, msg):
+    # ------------------------------------------------------------------
+    # Algo switcher
+    # ------------------------------------------------------------------
+
+    def _on_algo_change(self):
+        alg = self.algo_var.get()
+        if alg == "CLIQUE":
+            self.frm_gcbd.pack_forget()
+            self.frm_clique.pack(fill=tk.X)
+            self.algo_desc_var.set(
+                "CLIQUE: chia lưới k×k, đếm điểm mỗi ô, gom ô ≥ MinPts liền kề."
+            )
+        else:
+            self.frm_clique.pack_forget()
+            self.frm_gcbd.pack(fill=tk.X)
+            self.algo_desc_var.set(
+                "GCBD: mật độ tại node lưới (bilinear), loại biên lặp T vòng "
+                "(percentile-10), gán boundary theo hàng xóm mật độ cao nhất. "
+                "Không cần đặt MinPts."
+            )
+
+    # ------------------------------------------------------------------
+    # Logging
+    # ------------------------------------------------------------------
+
+    def _log(self, msg: str):
+        self._log_buffer.append(msg)
+
+    def _flush_log(self):
+        if not self._log_buffer:
+            return
         self.log_text.configure(state=tk.NORMAL)
-        self.log_text.insert(tk.END, msg + "\n")
+        for line in self._log_buffer:
+            self.log_text.insert(tk.END, line + "\n")
+        self._log_buffer.clear()
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
-        self.root.update_idletasks()
 
-    #hàm _setup_ax thiết lập lại trục của biểu đồ với tiêu đề mới và kiểu dáng được định nghĩa sẵn. Nó xóa nội dung cũ trên trục, đặt màu nền, màu sắc cho các tick và spines, và cập nhật tiêu đề với màu sắc và kích thước font phù hợp.
-    def _setup_ax(self, title):
+    # ------------------------------------------------------------------
+    # Chart helpers
+    # ------------------------------------------------------------------
+
+    def _setup_ax(self, title: str):
         self.ax.clear()
         self.ax.set_facecolor("#1E2B38")
         self.ax.tick_params(colors="#BDC3C7", labelsize=7)
-        for spine in self.ax.spines.values(): spine.set_edgecolor("#4A6274")
+        for spine in self.ax.spines.values():
+            spine.set_edgecolor("#4A6274")
         self.ax.set_title(title, color="#ECF0F1", fontsize=10)
 
-    #hàm _validate_params kiểm tra tính hợp lệ của các tham số k và xi được nhập bởi người dùng. Nó đảm bảo rằng k lớn hơn 1 và xi lớn hơn hoặc bằng 1. Nếu có lỗi trong quá trình kiểm tra (ví dụ: người dùng nhập giá trị không phải là số nguyên), nó sẽ hiển thị một thông báo lỗi và trả về None cho cả hai tham số.
-    def _validate_params(self):
+    def _add_legend(self, n_clusters: int):
+        handles = [mpatches.Patch(color=_cluster_color(c, n_clusters),
+                                  label=f"Cụm {c}") for c in range(n_clusters)]
+        handles.append(mpatches.Patch(color="#7F8C8D", label="Noise"))
+        self.ax.legend(handles=handles, loc="upper right", fontsize=7,
+                       facecolor="#2C3E50", labelcolor="#ECF0F1", framealpha=0.8)
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
+    def _plot_sample(self, max_pts: int = 20_000):
+        """
+        Visual Downsampling: thuật toán chạy trên 100% dữ liệu,
+        nhưng Matplotlib chỉ vẽ tối đa max_pts điểm đại diện.
+        Trả về (X_plot, labels_plot | None, sampled: bool).
+        """
+        n = len(self.X)
+        if n <= max_pts:
+            lbl = self.model.labels_ if self.model is not None else None
+            return self.X, lbl, False
+        idx = np.random.choice(n, max_pts, replace=False)
+        lbl = self.model.labels_[idx] if self.model is not None else None
+        return self.X[idx], lbl, True
+
+    def _validate_clique(self):
         try:
-            k = self.k_var.get()
+            k  = self.k_var.get()
             xi = self.xi_var.get()
             if k <= 1 or xi < 1:
-                raise ValueError("k > 1 và MinPts >= 1")
+                raise ValueError
             return k, xi
         except (tk.TclError, ValueError):
-            messagebox.showerror("Lỗi dữ liệu", "Vui lòng nhập số nguyên hợp lệ cho k (>1) và MinPts (>=1).")
+            messagebox.showerror("Lỗi tham số",
+                                 "k phải là số nguyên > 1 và MinPts >= 1.")
             return None, None
-    #hàm cmd_generate_data được gọi khi người dùng nhấn nút "Tạo ngẫu nhiên". Nó lấy số lượng mẫu và số cụm từ các Entry, kiểm tra tính hợp lệ của chúng, sau đó sử dụng hàm generate_mock_data để tạo ra dữ liệu mới. Dữ liệu này sau đó được hiển thị trên biểu đồ và thông tin về số điểm được tạo ra được cập nhật trong trạng thái. Nếu có lỗi trong quá trình tạo dữ liệu, nó sẽ hiển thị một thông báo lỗi.
+
+    def _validate_gcbd(self):
+        try:
+            l = self.l_var.get()
+            T = self.T_var.get()
+            if l < 2 or T < 1:
+                raise ValueError
+            return l, T
+        except (tk.TclError, ValueError):
+            messagebox.showerror("Lỗi tham số",
+                                 "l phải là số nguyên >= 2 và T >= 1.")
+            return None, None
+
+    def _set_controls(self, state: str):
+        for b in (self.btn_gen, self.btn_load, self.btn_grid,
+                  self.btn_run, self.btn_export):
+            b.configure(state=state)
+
+    # ------------------------------------------------------------------
+    # Command handlers
+    # ------------------------------------------------------------------
+
     def cmd_generate_data(self):
         try:
-            n = self.n_samples_var.get()
-            c = self.n_centers_var.get()
+            n   = self.n_samples_var.get()
+            c   = self.n_centers_var.get()
+            std = self.std_var.get()
         except tk.TclError:
-            messagebox.showerror("Lỗi nhập liệu", "Vui lòng nhập số nguyên hợp lệ.")
+            messagebox.showerror("Lỗi nhập liệu", "Vui lòng nhập giá trị hợp lệ.")
             return
-
         if n < 10 or c < 1:
-            messagebox.showerror("Lỗi logic", "Số điểm tối thiểu là 10, Số cụm tối thiểu là 1.")
+            messagebox.showerror("Lỗi logic", "Số điểm >= 10, số cụm >= 1.")
+            return
+        if std <= 0:
+            messagebox.showerror("Lỗi logic", "std phải > 0.")
             return
 
-        try:
-            self.X = generate_mock_data(n, c, 1.2)
-            self._setup_ax("Dữ liệu ban đầu")
-            self.ax.scatter(self.X[:, 0], self.X[:, 1], s=12, c="#3498DB", alpha=0.7, edgecolors="none")
-            self.canvas.draw()
-            self.stat_text.set(f"Đã tạo {len(self.X)} điểm.")
-            self._log(f"[Dữ liệu] Khởi tạo {len(self.X)} điểm ngẫu nhiên.")
-        except Exception as e:
-            messagebox.showerror("Lỗi hệ thống", f"Phát sinh lỗi:\n{e}")
+        self.X = generate_mock_data(n, c, std)
+        self.model = None
+        X_plot, _, sampled = self._plot_sample()
+        title = f"Dữ liệu ban đầu" + (f" (hiển thị {len(X_plot):,}/{len(self.X):,})" if sampled else "")
+        self._setup_ax(title)
+        self.ax.scatter(X_plot[:, 0], X_plot[:, 1], s=12, c="#3498DB", alpha=0.7, edgecolors="none")
+        self.canvas.draw()
+        self.stat_var.set(f"Đã tạo {len(self.X):,} điểm.")
+        self._log(f"[Dữ liệu] {len(self.X):,} điểm ngẫu nhiên (std={std}).")
+        self._flush_log()
 
-    #hàm cmd_load_csv được gọi khi người dùng nhấn nút "Tải file CSV". Nó mở một hộp thoại để người dùng chọn file CSV, sau đó sử dụng hàm load_data_from_csv để đọc dữ liệu từ file. Dữ liệu này được hiển thị trên biểu đồ và thông tin về số điểm được tải lên được cập nhật trong trạng thái. Nếu có lỗi trong quá trình nạp dữ liệu (ví dụ: file không hợp lệ hoặc không chứa dữ liệu số), nó sẽ hiển thị một thông báo lỗi.
     def cmd_load_csv(self):
         path = filedialog.askopenfilename(filetypes=[("CSV", "*.csv")])
-        if not path: return
-
+        if not path:
+            return
         try:
             self.X = load_data_from_csv(path)
-            if len(self.X) < 2:
-                raise ValueError("Tập dữ liệu quá nhỏ.")
+        except (ValueError, OSError) as e:
+            messagebox.showerror("Lỗi nạp dữ liệu", str(e))
+            return
+        if len(self.X) < 2:
+            messagebox.showerror("Lỗi", "Tập dữ liệu quá nhỏ.")
+            return
 
-            self._setup_ax(f"Dữ liệu từ: {os.path.basename(path)}")
-            self.ax.scatter(self.X[:, 0], self.X[:, 1], s=12, c="#3498DB", alpha=0.7, edgecolors="none")
-            self.canvas.draw()
-            self.stat_text.set(f"Đã tải {len(self.X)} điểm.")
-            self._log(f"[File] Đã tải {len(self.X)} điểm từ CSV.")
-        except Exception as e:
-            messagebox.showerror("Lỗi nạp dữ liệu", f"Không thể xử lý file này:\n{e}")
+        self.model = None
+        X_plot, _, sampled = self._plot_sample()
+        title = f"Dữ liệu: {os.path.basename(path)}" + (f" (hiển thị {len(X_plot):,}/{len(self.X):,})" if sampled else "")
+        self._setup_ax(title)
+        self.ax.scatter(X_plot[:, 0], X_plot[:, 1], s=12, c="#3498DB", alpha=0.7, edgecolors="none")
+        self.canvas.draw()
+        self.stat_var.set(f"Đã tải {len(self.X):,} điểm.")
+        self._log(f"[File] {len(self.X):,} điểm từ CSV.")
+        self._flush_log()
 
-    #hàm cmd_show_grid được gọi khi người dùng nhấn nút "Xem Lưới trung gian". Nó kiểm tra xem dữ liệu đã được nạp hay chưa, sau đó lấy các tham số k và xi từ Entry và kiểm tra tính hợp lệ của chúng. Nếu mọi thứ hợp lệ, nó tạo một instance của CLIQUEAlgorithm với dữ liệu và tham số đã cho, xây dựng lưới và tính mật độ cho từng ô. Cuối cùng, nó hiển thị lưới trên biểu đồ, tô màu các ô đạt ngưỡng mật độ bằng màu cam và hiển thị số lượng điểm trong mỗi ô đó.
     def cmd_show_grid(self):
-        if self.X is None: return
-        k, xi = self._validate_params()
-        if k is None: return
+        if self.X is None:
+            return
+        alg = self.algo_var.get()
 
-        m = CLIQUEAlgorithm(self.X, k, xi, self._log)
-        m._build_grid()
-        m._compute_density()
+        # Tái dụng model nếu đã có cùng thuật toán + tham số
+        if (self.model is not None
+                and getattr(self.model, '_algo_tag', None) == alg
+                and self.model.density_grid_ is not None):
+            m = self.model
+            self._draw_grid(m, alg)
+            return
 
-        self._setup_ax(f"Lưới {k}x{k} - Ô màu cam đạt MinPts={xi}")
+        if alg == "CLIQUE":
+            k, xi = self._validate_clique()
+            if k is None: return
+            m = CLIQUEAlgorithm(self.X, k, xi, self._log)
+            m.prepare_grid()
+            self._flush_log()
+            self._draw_grid_clique(m)
+        else:
+            l, T = self._validate_gcbd()
+            if l is None: return
+            m = GCBDAlgorithm(self.X, l, T, self._log)
+            m.prepare_grid()
+            self._flush_log()
+            self._draw_grid_gcbd(m)
+
+    def _draw_grid(self, m, alg: str):
+        if alg == "CLIQUE":
+            self._draw_grid_clique(m)
+        else:
+            self._draw_grid_gcbd(m)
+
+    def _draw_grid_clique(self, m: CLIQUEAlgorithm):
+        k, xi = m.k, m.xi
         xe, ye, H = m.x_edges_, m.y_edges_, m.density_grid_
-
+        self._setup_ax(f"[CLIQUE] Lưới {k}×{k} – ô cam đạt MinPts={xi}")
         for i in range(k):
             for j in range(k):
                 if H[i, j] >= xi:
-                    self.ax.add_patch(
-                        mpatches.Rectangle((xe[i], ye[j]), xe[i + 1] - xe[i], ye[j + 1] - ye[j], facecolor="#F39C12",
-                                           alpha=0.4))
-                    self.ax.text((xe[i] + xe[i + 1]) / 2, (ye[j] + ye[j + 1]) / 2, str(int(H[i, j])), color="#F1C40F",
+                    self.ax.add_patch(mpatches.Rectangle(
+                        (xe[i], ye[j]), xe[i+1]-xe[i], ye[j+1]-ye[j],
+                        facecolor="#F39C12", alpha=0.4))
+                    self.ax.text((xe[i]+xe[i+1])/2, (ye[j]+ye[j+1])/2,
+                                 str(int(H[i, j])), color="#F1C40F",
                                  ha="center", va="center", fontsize=7)
-
         for x in xe: self.ax.axvline(x, color="#4A6274", lw=0.5, ls="--")
         for y in ye: self.ax.axhline(y, color="#4A6274", lw=0.5, ls="--")
-        self.ax.scatter(self.X[:, 0], self.X[:, 1], s=10, c="#3498DB", alpha=0.6, edgecolors="none")
+        X_plot, _, _ = self._plot_sample()
+        self.ax.scatter(X_plot[:, 0], X_plot[:, 1], s=10, c="#3498DB", alpha=0.6, edgecolors="none")
         self.canvas.draw()
         self.nb.select(0)
 
-    #hàm cmd_run_algo được gọi khi người dùng nhấn nút "Chạy Phân Cụm". Nó kiểm tra xem dữ liệu đã được nạp hay chưa, sau đó lấy các tham số k và xi từ Entry và kiểm tra tính hợp lệ của chúng. Nếu mọi thứ hợp lệ, nó tạo một instance của CLIQUEAlgorithm với dữ liệu và tham số đã cho, sau đó gọi phương thức fit() để thực hiện phân cụm. Kết quả phân cụm được hiển thị trên biểu đồ với các màu khác nhau cho từng cụm và các điểm nhiễu được đánh dấu bằng dấu "x". Sau khi hoàn thành, nó cập nhật trạng thái với số lượng cụm tìm được. Nút "Chạy Phân Cụm" cũng được khóa trong quá trình chạy để ngăn người dùng nhấn nhiều
-    def cmd_run_algo(self):
-        if self.X is None: return
-        k, xi = self._validate_params()
-        if k is None: return
+    def _draw_grid_gcbd(self, m: GCBDAlgorithm):
+        """
+        Vẽ lưới GCBD: scatter-plot mật độ node bằng kích thước/màu điểm.
+        Node có rho > 0 được hiển thị; node có rho cao hơn thì lớn hơn.
+        """
+        xe, ye = m.x_edges_, m.y_edges_
+        H = m.density_grid_
+        self._setup_ax(f"[GCBD] Lưới {m.l}×{m.l} – mật độ node (bilinear)")
 
+        # Vẽ grid lines
+        for x in xe: self.ax.axvline(x, color="#4A6274", lw=0.4, ls="--")
+        for y in ye: self.ax.axhline(y, color="#4A6274", lw=0.4, ls="--")
+
+        # Vẽ node theo mật độ
+        ni_arr, nj_arr = np.where(H > 0)
+        if len(ni_arr) > 0:
+            rho_vals = H[ni_arr, nj_arr]
+            rho_norm = rho_vals / rho_vals.max()
+            node_x_coords = xe[ni_arr]
+            node_y_coords = ye[nj_arr]
+            self.ax.scatter(node_x_coords, node_y_coords,
+                            s=rho_norm * 120 + 10,
+                            c=rho_vals, cmap="YlOrRd", alpha=0.8,
+                            edgecolors="none", zorder=3)
+
+        X_plot, _, _ = self._plot_sample()
+        self.ax.scatter(X_plot[:, 0], X_plot[:, 1], s=8, c="#3498DB", alpha=0.4,
+                        edgecolors="none", zorder=2)
+        self.canvas.draw()
+        self.nb.select(0)
+
+    def cmd_run_algo(self):
+        if self.X is None:
+            return
+        alg = self.algo_var.get()
+
+        if alg == "CLIQUE":
+            k, xi = self._validate_clique()
+            if k is None: return
+        else:
+            l, T = self._validate_gcbd()
+            if l is None: return
+
+        # Xóa log cũ
         self.nb.select(1)
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
         self.log_text.configure(state=tk.DISABLED)
+        self._log_buffer.clear()
 
-        # Khắc phục: Khóa nút trong lúc thuật toán chạy
-        self.btn_run.configure(state=tk.DISABLED)
-        self.root.update_idletasks()
+        self._set_controls(tk.DISABLED)
+        self.stat_var.set("Đang chạy thuật toán...")
+        X_snap = self.X.copy()
 
-        try:
-            self.model = CLIQUEAlgorithm(self.X, k, xi, self._log).fit()
+        def _worker():
+            if alg == "CLIQUE":
+                model = CLIQUEAlgorithm(X_snap, k, xi, self._log).fit()
+            else:
+                model = GCBDAlgorithm(X_snap, l, T, self._log).fit()
+            model._algo_tag = alg
+            self.root.after(0, lambda: _done(model))
 
-            self._setup_ax(f"Kết quả: {self.model.n_clusters_} cụm")
-            xe, ye = self.model.x_edges_, self.model.y_edges_
+        def _done(model):
+            self.model = model
+            self._flush_log()
+            self._draw_result(model, alg)
+            self._set_controls(tk.NORMAL)
+            noise = int(np.sum(model.labels_ == -1))
+            self.stat_var.set(
+                f"[{alg}] {model.n_clusters_} cụm | "
+                f"{len(self.X)-noise:,} điểm thuộc cụm | "
+                f"{noise:,} noise (tổng {len(self.X):,})"
+            )
 
-            for cid, cells in enumerate(self.model.cluster_cells_):
-                col = CLUSTER_COLORS[cid % len(CLUSTER_COLORS)]
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _draw_result(self, model, alg: str):
+        """Vẽ kết quả phân cụm với visual downsampling."""
+        n = model.n_clusters_
+        xe, ye = model.x_edges_, model.y_edges_
+        X_plot, labels_plot, sampled = self._plot_sample()
+        sample_note = f" — hiển thị {len(X_plot):,}/{len(self.X):,} điểm" if sampled else ""
+        self._setup_ax(f"[{alg}] Kết quả: {n} cụm{sample_note}")
+
+        # Tô vùng core cluster (luôn dùng toàn bộ cell/node – nhanh vì số cell nhỏ)
+        if alg == "CLIQUE":
+            for cid, cells in enumerate(model.cluster_cells_):
+                col = _cluster_color(cid, n)
                 for (ci, cj) in cells:
-                    self.ax.add_patch(
-                        mpatches.Rectangle((xe[ci], ye[cj]), xe[ci + 1] - xe[ci], ye[cj + 1] - ye[cj], facecolor=col,
-                                           alpha=0.2))
+                    self.ax.add_patch(mpatches.Rectangle(
+                        (xe[ci], ye[cj]), xe[ci+1]-xe[ci], ye[cj+1]-ye[cj],
+                        facecolor=col, alpha=0.18))
+        else:
+            dx = (xe[-1] - xe[0]) / model.l * 0.5
+            dy = (ye[-1] - ye[0]) / model.l * 0.5
+            for cid, cells in enumerate(model.cluster_cells_):
+                col = _cluster_color(cid, n)
+                for (ni, nj) in cells:
+                    cx, cy = xe[ni], ye[nj]
+                    self.ax.add_patch(mpatches.Rectangle(
+                        (cx - dx, cy - dy), 2*dx, 2*dy,
+                        facecolor=col, alpha=0.18))
 
-            for cid in range(self.model.n_clusters_):
-                mask = self.model.labels_ == cid
-                self.ax.scatter(self.X[mask, 0], self.X[mask, 1], s=14, color=CLUSTER_COLORS[cid % len(CLUSTER_COLORS)])
+        # Scatter chỉ trên tập mẫu (tránh crash Matplotlib với 1M điểm)
+        for cid in range(n):
+            mask = labels_plot == cid
+            if mask.any():
+                self.ax.scatter(X_plot[mask, 0], X_plot[mask, 1],
+                                s=14, color=_cluster_color(cid, n), edgecolors="none")
 
-            noise = self.model.labels_ == -1
-            if noise.any():
-                self.ax.scatter(self.X[noise, 0], self.X[noise, 1], s=10, color="#7F8C8D", marker="x")
+        noise = labels_plot == -1
+        if noise.any():
+            self.ax.scatter(X_plot[noise, 0], X_plot[noise, 1],
+                            s=10, color="#7F8C8D", marker="x")
 
-            self.canvas.draw()
-            self.nb.select(0)
-            self.stat_text.set(f"Hoàn thành: {self.model.n_clusters_} cụm.")
-        finally:
-            self.btn_run.configure(state=tk.NORMAL)
+        self._add_legend(n)
+        self.canvas.draw()
+        self.nb.select(0)
 
-    #hàm cmd_export được gọi khi người dùng nhấn nút "Xuất kết quả". Nó kiểm tra xem mô hình phân cụm đã được tạo ra hay chưa, sau đó mở một hộp thoại để người dùng chọn vị trí và tên file CSV để lưu kết quả. Kết quả được lưu dưới dạng file CSV với ba cột: x, y và cluster (nơi cluster là nhãn cụm hoặc -1 cho điểm nhiễu). Nếu có lỗi trong quá trình lưu file (ví dụ: file đang mở ở nơi khác), nó sẽ hiển thị một thông báo lỗi.
     def cmd_export(self):
-        if self.model is None: return
-        path = filedialog.asksaveasfilename(defaultextension=".csv", initialfile="ket_qua.csv")
-        if not path: return
-
+        if self.model is None:
+            messagebox.showwarning("Chưa có kết quả", "Vui lòng chạy phân cụm trước.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv", initialfile="ket_qua.csv",
+            filetypes=[("CSV", "*.csv")])
+        if not path:
+            return
         try:
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(["x", "y", "cluster"])
+                w = csv.writer(f)
+                w.writerow(["x", "y", "cluster"])
                 for (x, y), lbl in zip(self.X, self.model.labels_):
-                    writer.writerow([round(x, 4), round(y, 4), int(lbl)])
-            messagebox.showinfo("OK", "Đã lưu kết quả.")
-        except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể lưu file (file có thể đang mở ở nơi khác):\n{e}")
+                    w.writerow([round(x, 4), round(y, 4), int(lbl)])
+            messagebox.showinfo("Thành công", f"Đã lưu:\n{path}")
+        except OSError as e:
+            messagebox.showerror("Lỗi lưu file", str(e))

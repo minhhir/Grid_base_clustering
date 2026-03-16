@@ -1,8 +1,19 @@
 import numpy as np
 import csv
 
-# hàm generate_mock_data tạo ra dữ liệu giả cho phân cụm bằng cách tạo ra một số lượng mẫu n_samples được phân bố xung quanh n_centers trung tâm với độ lệch chuẩn std. Nó sử dụng numpy để tạo ra các điểm dữ liệu và trả về một mảng NumPy chứa tất cả các điểm.
+
 def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray:
+    """
+    Tạo dữ liệu giả gồm các cụm Gaussian phân bố trong mặt phẳng 2D.
+
+    Args:
+        n_samples: Tổng số điểm dữ liệu cần tạo.
+        n_centers: Số cụm (tâm) ngẫu nhiên.
+        std: Độ lệch chuẩn của mỗi cụm (kiểm soát độ phân tán).
+
+    Returns:
+        Mảng NumPy shape (n_samples, 2).
+    """
     rng = np.random.default_rng()
     centers = rng.uniform(-8, 8, size=(n_centers, 2))
     X_list = []
@@ -15,8 +26,22 @@ def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray
 
     return np.vstack(X_list)
 
-# ham load_data_from_csv đọc dữ liệu từ một file CSV và trả về một mảng NumPy. Nó sử dụng csv.reader để đọc từng dòng của file, cố gắng chuyển đổi các giá trị thành số thực và chỉ giữ lại hai giá trị đầu tiên của mỗi dòng nếu chúng hợp lệ. Nếu file không chứa dữ liệu số hợp lệ, nó sẽ ném ra một lỗi ValueError.
+
 def load_data_from_csv(filepath: str) -> np.ndarray:
+    """
+    Đọc dữ liệu 2D từ file CSV.
+
+    Bỏ qua các dòng tiêu đề hoặc dòng không chứa đủ 2 giá trị số.
+
+    Args:
+        filepath: Đường dẫn tới file CSV.
+
+    Returns:
+        Mảng NumPy shape (n, 2).
+
+    Raises:
+        ValueError: Nếu file rỗng hoặc không có dòng số hợp lệ nào.
+    """
     data = []
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
@@ -26,7 +51,7 @@ def load_data_from_csv(filepath: str) -> np.ndarray:
                 if len(nums) >= 2:
                     data.append(nums[:2])
             except ValueError:
-                continue
+                continue  # Bỏ qua dòng tiêu đề hoặc dòng không hợp lệ
 
     if not data:
         raise ValueError("File CSV rỗng hoặc không chứa dữ liệu số hợp lệ.")
