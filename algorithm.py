@@ -2,10 +2,17 @@ import numpy as np
 from collections import deque
 import time
 
+"""
+Thuật toán CLIQUE (CLustering In QUEst) cho dữ liệu 2D.
 
-# =============================================================================
-# CLIQUE Algorithm
-# =============================================================================
+Ý tưởng: chia không gian thành k×k ô (cell), xác định ô có mật độ
+điểm >= xi (MinPts), rồi gom các ô dày đặc liền kề thành cụm bằng BFS.
+
+Tham số:
+    X  : mảng dữ liệu shape (n, 2)
+    k  : số ô trên mỗi trục
+    xi : ngưỡng mật độ tối thiểu (MinPts)
+"""
 
 class CLIQUEAlgorithm:
     """
@@ -34,18 +41,12 @@ class CLIQUEAlgorithm:
         self.x_edges_       = None
         self.y_edges_       = None
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def prepare_grid(self):
-        """Xây lưới + tính mật độ (dùng để xem trước mà không gán nhãn)."""
         self._build_grid()
         self._compute_density()
         return self
-
+    #pipeline chính: build grid → compute density → connected components → assign labels
     def fit(self):
-        """Pipeline đầy đủ: lưới → mật độ → BFS → gán nhãn."""
         self.log(f"[CLIQUE] n={len(self.X)}, k={self.k}, MinPts={self.xi}")
         t0 = time.time()
         self._build_grid()
@@ -59,10 +60,6 @@ class CLIQUEAlgorithm:
         self._assign_labels()
         self.log(f"Kết quả: {self.n_clusters_} cụm | {(time.time()-t0)*1000:.1f} ms")
         return self
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
 
     def _build_grid(self):
         self.log("Khởi tạo không gian lưới...")
@@ -86,7 +83,7 @@ class CLIQUEAlgorithm:
                                for j in range(self.k) if H[i, j] >= self.xi]
         self.log(f"Ô có dữ liệu: {int(np.sum(H>0))} | "
                  f"Ô đạt ngưỡng: {len(self.dense_units_)} | {(time.time()-t0)*1000:.1f} ms")
-
+    #hàm kết nối các ô dày đặc liền kề bằng BFS (Chebyshev dist = 1 → 8-connectivity)
     def _connected_components(self):
         self.log("BFS gom cụm...")
         t0 = time.time()
@@ -110,7 +107,7 @@ class CLIQUEAlgorithm:
             self.cluster_cells_.append(cluster)
         self.n_clusters_ = len(self.cluster_cells_)
         self.log(f"Số cụm: {self.n_clusters_} | {(time.time()-t0)*1000:.1f} ms")
-
+    # assign_labels: map điểm dữ liệu → cụm dựa trên ô chứa nó (nearest node)
     def _assign_labels(self):
         self.log("Gán nhãn điểm...")
         t0 = time.time()
@@ -125,12 +122,7 @@ class CLIQUEAlgorithm:
         self.log(f"Thuộc cụm: {len(self.X)-noise} | Noise: {noise} | {(time.time()-t0)*1000:.1f} ms")
 
 
-# =============================================================================
-# GCBD Algorithm  (Du & Wu, Entropy 2022)
-# =============================================================================
-
-class GCBDAlgorithm:
-    """
+"""
     GCBD – Grid-Based Clustering Using Boundary Detection.
     Nguồn: Du, M.; Wu, F. Entropy 2022, 24, 1606.
     https://doi.org/10.3390/e24111606
@@ -150,6 +142,8 @@ class GCBDAlgorithm:
         T : số vòng lặp phát hiện biên (paper khuyến nghị 2–12)
     """
 
+
+class GCBDAlgorithm:
     def __init__(self, X: np.ndarray, l: int, T: int, log_callback=None):
         self.X   = X
         self.l   = l
@@ -169,19 +163,15 @@ class GCBDAlgorithm:
         # Nội bộ
         self._x_min = self._x_range = None
         self._y_min = self._y_range = None
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
+    """ Public API: có thể gọi riêng từng bước nếu muốn xem intermediate result (mật độ node) mà không gán nhãn.
+        self.prepare_grid() → xây lưới chuẩn + tính mật độ node (để xem trước)
+    """
     def prepare_grid(self):
-        """Xây lưới chuẩn + tính mật độ node (dùng để xem trước trên GUI)."""
         self._build_standard_grid()
         self._compute_node_density(self.X)
         return self
 
     def fit(self):
-        """Pipeline đầy đủ theo Algorithm 1 trong bài báo."""
         self.log(f"[GCBD] n={len(self.X)}, l={self.l}, T={self.T}")
         t_start = time.time()
 
@@ -202,7 +192,6 @@ class GCBDAlgorithm:
 
         boundary_order = []
 
-        # FIX: tính sẵn nearest node cho toàn bộ dữ liệu 1 lần duy nhất
         # Mỗi vòng chỉ cần index vào mảng này, không gọi lại _scale + round
         nn_all = self._nearest_node(self.X)   # shape (n, 2), int32
 
@@ -219,9 +208,14 @@ class GCBDAlgorithm:
                 break
 
             boundary_order.extend(removed)
+
+            # Snapshot mật độ của node sắp bị loại TRƯỚC KHI trừ điểm khỏi rho
+            # → rho_snapshot[v] = mật độ tại thời điểm node v còn hoạt động
+            rho_snapshot[remove_mask] = rho[remove_mask]
             active_nodes[remove_mask] = False
 
-            # FIX: dùng nn_all đã tính sẵn; vectorize keep_local bằng fancy indexing
+            #dùng mảng nearest node đã tính sẵn để tìm điểm nào bị ảnh hưởng bởi node bị loại
+            deactivated = np.array([], dtype=int)
             if active_pts.any():
                 ap_idx = np.where(active_pts)[0]
                 ni_ap  = nn_all[ap_idx, 0]
@@ -230,13 +224,12 @@ class GCBDAlgorithm:
                 deactivated = ap_idx[~keep_local]
                 active_pts[deactivated] = False
 
-                # FIX: incremental update – chỉ trừ đóng góp của điểm vừa bị loại
-                # O(removed_pts) thay vì O(n) → gần như tức thì với dữ liệu lớn
-                if len(deactivated) > 0:
-                    rho = self._subtract_density(rho, self.X[deactivated])
-                rho[~active_nodes] = 0.0
-                rho_snapshot = np.where(active_nodes, rho, rho_snapshot)
-                rho = rho_snapshot.copy()
+            # 0.1% điểm có thể bị ảnh hưởng mỗi vòng → O(n) vẫn nhanh hơn O((l+1)^2) khi l=100
+            if len(deactivated) > 0:
+                rho = self._subtract_density(rho, self.X[deactivated])
+
+            # Zero inactive nodes để percentile vòng tiếp không bị nhiễm
+            rho[~active_nodes] = 0.0
 
             self.log(f"  Vòng {t}: loại {len(removed)} node | "
                      f"còn {int(active_nodes.sum())} node, {int(active_pts.sum())} điểm")
@@ -310,10 +303,10 @@ class GCBDAlgorithm:
                  f"{(time.time()-t_start)*1000:.1f} ms tổng")
         return self
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
+    """
+    Lưới chuẩn (Definition 1 trong bài báo):
+    scale dữ liệu về [1, l+1], node ở toạ độ nguyên.
+    """
     def _build_standard_grid(self):
         """
         Lưới chuẩn (Definition 1 trong bài báo):
@@ -332,24 +325,24 @@ class GCBDAlgorithm:
         self.y_edges_ = np.linspace(y_min, y_max, self.l + 1)
         self.log(f"Lưới {self.l}×{self.l} | {(self.l+1)**2} node giao")
 
+    """
+    Hàm scale Φ (Eq. 3):  Φ(xij) = l*(xij - min_j)/(max_j - min_j) + 1
+    Kết quả ∈ [1, l+1].
+    """
     def _scale(self, X: np.ndarray) -> np.ndarray:
-        """
-        Hàm scale Φ (Eq. 3):  Φ(xij) = l*(xij - min_j)/(max_j - min_j) + 1
-        Kết quả ∈ [1, l+1].
-        """
         s = np.empty_like(X, dtype=np.float64)
         s[:, 0] = self.l * (X[:, 0] - self._x_min) / self._x_range + 1.0
         s[:, 1] = self.l * (X[:, 1] - self._y_min) / self._y_range + 1.0
         return np.clip(s, 1.0, self.l + 1.0 - 1e-9)
 
-    def _compute_node_density(self, X: np.ndarray, silent: bool = False) -> np.ndarray:
-        """
-        Mật độ node (Eq. 4–5):
-            ρ_v = Σ_xi ∏_j max(1 - |Φ(xij) - vj|, 0)
+    """
+    Mật độ node (Eq. 4–5):
+        ρ_v = Σ_xi ∏_j max(1 - |Φ(xij) - vj|, 0)
 
-        Mỗi điểm chỉ ảnh hưởng đến 4 node góc của ô chứa nó.
-        Dùng np.bincount thay np.add.at → fully vectorized, nhanh ~10× với 1M điểm.
-        """
+    Mỗi điểm chỉ ảnh hưởng đến 4 node góc của ô chứa nó.
+    Dùng np.bincount thay np.add.at → fully vectorized, nhanh ~10× với 1M điểm.
+    """
+    def _compute_node_density(self, X: np.ndarray, silent: bool = False) -> np.ndarray:
         if not silent:
             self.log("Tính mật độ node (bilinear kernel)...")
         t0 = time.time()
@@ -381,11 +374,11 @@ class GCBDAlgorithm:
                      f"{(time.time()-t0)*1000:.1f} ms")
         return rho
 
+    """
+    Trừ đóng góp của các điểm X_removed khỏi mảng mật độ rho.
+    Incremental update: O(len(X_removed)) thay vì O(n_total).
+    """
     def _subtract_density(self, rho: np.ndarray, X_removed: np.ndarray) -> np.ndarray:
-        """
-        Trừ đóng góp của các điểm X_removed khỏi mảng mật độ rho.
-        Incremental update: O(len(X_removed)) thay vì O(n_total).
-        """
         if len(X_removed) == 0:
             return rho
         S  = self._scale(X_removed)
@@ -404,11 +397,11 @@ class GCBDAlgorithm:
         )
         return np.maximum(rho_flat.reshape(W, W), 0.0)  # clip âm do float rounding
 
+    """
+    Node gần nhất cho mỗi điểm: làm tròn toạ độ đã scale → index 0-based.
+    (Section 4.4.3: dùng hàm round thay vì tính khoảng cách – O(n))
+    """
     def _nearest_node(self, X: np.ndarray) -> np.ndarray:
-        """
-        Node gần nhất cho mỗi điểm: làm tròn toạ độ đã scale → index 0-based.
-        (Section 4.4.3: dùng hàm round thay vì tính khoảng cách – O(n))
-        """
         S  = self._scale(X)
         ni = np.clip(np.round(S[:, 0]).astype(int) - 1, 0, self.l)
         nj = np.clip(np.round(S[:, 1]).astype(int) - 1, 0, self.l)

@@ -1,19 +1,18 @@
 import numpy as np
 import csv
 
+"""
+Tạo dữ liệu giả gồm các cụm Gaussian phân bố trong mặt phẳng 2D.
 
+Args:
+    n_samples: Tổng số điểm dữ liệu cần tạo.
+    n_centers: Số cụm (tâm) ngẫu nhiên.
+    std: Độ lệch chuẩn của mỗi cụm (kiểm soát độ phân tán).
+
+Returns:
+    Mảng NumPy shape (n_samples, 2).
+"""
 def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray:
-    """
-    Tạo dữ liệu giả gồm các cụm Gaussian phân bố trong mặt phẳng 2D.
-
-    Args:
-        n_samples: Tổng số điểm dữ liệu cần tạo.
-        n_centers: Số cụm (tâm) ngẫu nhiên.
-        std: Độ lệch chuẩn của mỗi cụm (kiểm soát độ phân tán).
-
-    Returns:
-        Mảng NumPy shape (n_samples, 2).
-    """
     rng = np.random.default_rng()
     centers = rng.uniform(-8, 8, size=(n_centers, 2))
     X_list = []
@@ -28,20 +27,6 @@ def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray
 
 
 def load_data_from_csv(filepath: str) -> np.ndarray:
-    """
-    Đọc dữ liệu 2D từ file CSV.
-
-    Bỏ qua các dòng tiêu đề hoặc dòng không chứa đủ 2 giá trị số.
-
-    Args:
-        filepath: Đường dẫn tới file CSV.
-
-    Returns:
-        Mảng NumPy shape (n, 2).
-
-    Raises:
-        ValueError: Nếu file rỗng hoặc không có dòng số hợp lệ nào.
-    """
     data = []
     with open(filepath, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
