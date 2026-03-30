@@ -2,31 +2,7 @@ import numpy as np
 from collections import deque
 import time
 
-"""
-Thuật toán CLIQUE (CLustering In QUEst) cho dữ liệu 2D.
-
-Ý tưởng: chia không gian thành k×k ô (cell), xác định ô có mật độ
-điểm >= xi (MinPts), rồi gom các ô dày đặc liền kề thành cụm bằng BFS.
-
-Tham số:
-    X  : mảng dữ liệu shape (n, 2)
-    k  : số ô trên mỗi trục
-    xi : ngưỡng mật độ tối thiểu (MinPts)
-"""
-
 class CLIQUEAlgorithm:
-    """
-    Thuật toán CLIQUE (CLustering In QUEst) cho dữ liệu 2D.
-
-    Ý tưởng: chia không gian thành k×k ô (cell), xác định ô có mật độ
-    điểm >= xi (MinPts), rồi gom các ô dày đặc liền kề thành cụm bằng BFS.
-
-    Tham số:
-        X  : mảng dữ liệu shape (n, 2)
-        k  : số ô trên mỗi trục
-        xi : ngưỡng mật độ tối thiểu (MinPts)
-    """
-
     def __init__(self, X: np.ndarray, k: int, xi: int, log_callback=None):
         self.X   = X
         self.k   = k
@@ -122,27 +98,6 @@ class CLIQUEAlgorithm:
         self.log(f"Thuộc cụm: {len(self.X)-noise} | Noise: {noise} | {(time.time()-t0)*1000:.1f} ms")
 
 
-"""
-    GCBD – Grid-Based Clustering Using Boundary Detection.
-    Nguồn: Du, M.; Wu, F. Entropy 2022, 24, 1606.
-    https://doi.org/10.3390/e24111606
-
-    Ba cải tiến chính so với CLIQUE:
-      1. Mật độ tính tại NÚT (node = giao điểm lưới) bằng bilinear kernel,
-         thay vì đếm điểm trong ô.
-      2. Phát hiện biên lặp (iterative boundary detection, T vòng):
-         mỗi vòng loại node dưới ngưỡng percentile-10 → tự động
-         phân biệt core node và boundary node, không cần MinPts.
-      3. Gán boundary node theo hàng xóm có mật độ cao nhất (DPC-inspired):
-         giảm đáng kể noise giả, xử lý tốt cụm mật độ biến thiên & chồng lấp.
-
-    Tham số:
-        X : mảng dữ liệu shape (n, 2)
-        l : số khoảng chia trên mỗi trục (tương đương k trong CLIQUE)
-        T : số vòng lặp phát hiện biên (paper khuyến nghị 2–12)
-    """
-
-
 class GCBDAlgorithm:
     def __init__(self, X: np.ndarray, l: int, T: int, log_callback=None):
         self.X   = X
@@ -175,9 +130,9 @@ class GCBDAlgorithm:
         self.log(f"[GCBD] n={len(self.X)}, l={self.l}, T={self.T}")
         t_start = time.time()
 
-        # Bước 1 – Lưới chuẩn + mật độ ban đầu
+        #Lưới chuẩn + mật độ ban đầu
         self._build_standard_grid()
-        self.log("Bước 1 – Tính mật độ node ban đầu...")
+        self.log("Tính mật độ node ban đầu...")
         rho = self._compute_node_density(self.X)
 
         active_pts   = np.ones(len(self.X), dtype=bool)
@@ -186,8 +141,8 @@ class GCBDAlgorithm:
         rho_snapshot = rho.copy()
         node_cluster = {}
 
-        # Bước 2 – Phát hiện biên lặp
-        self.log(f"Bước 2 – Phát hiện biên ({self.T} vòng)...")
+        #Phát hiện biên lặp
+        self.log(f"Phát hiện biên ({self.T} vòng)...")
         t2 = time.time()
 
         boundary_order = []
@@ -220,11 +175,9 @@ class GCBDAlgorithm:
                 ap_idx = np.where(active_pts)[0]
                 ni_ap  = nn_all[ap_idx, 0]
                 nj_ap  = nn_all[ap_idx, 1]
-                keep_local = active_nodes[ni_ap, nj_ap]   # fully vectorized, no Python loop
+                keep_local = active_nodes[ni_ap, nj_ap]
                 deactivated = ap_idx[~keep_local]
                 active_pts[deactivated] = False
-
-            # 0.1% điểm có thể bị ảnh hưởng mỗi vòng → O(n) vẫn nhanh hơn O((l+1)^2) khi l=100
             if len(deactivated) > 0:
                 rho = self._subtract_density(rho, self.X[deactivated])
 
@@ -246,8 +199,8 @@ class GCBDAlgorithm:
             self.n_clusters_ = 0
             return self
 
-        # Bước 3 – Merge core nodes bằng BFS (Chebyshev dist = 1 → 8-connectivity)
-        self.log("Bước 3 – Gom core nodes (BFS 8-connectivity)...")
+        # Merge core nodes bằng BFS (Chebyshev dist = 1 → 8-connectivity)
+        self.log("Gom core nodes (BFS 8-connectivity)...")
         t3 = time.time()
         core_set = set(core_coords)
         visited  = set()
@@ -303,15 +256,8 @@ class GCBDAlgorithm:
                  f"{(time.time()-t_start)*1000:.1f} ms tổng")
         return self
 
-    """
-    Lưới chuẩn (Definition 1 trong bài báo):
-    scale dữ liệu về [1, l+1], node ở toạ độ nguyên.
-    """
+
     def _build_standard_grid(self):
-        """
-        Lưới chuẩn (Definition 1 trong bài báo):
-        scale dữ liệu về [1, l+1], node ở toạ độ nguyên.
-        """
         self.log("Xây lưới chuẩn (standard grid)...")
         x_min, x_max = self.X[:, 0].min(), self.X[:, 0].max()
         y_min, y_max = self.X[:, 1].min(), self.X[:, 1].max()
@@ -340,7 +286,6 @@ class GCBDAlgorithm:
         ρ_v = Σ_xi ∏_j max(1 - |Φ(xij) - vj|, 0)
 
     Mỗi điểm chỉ ảnh hưởng đến 4 node góc của ô chứa nó.
-    Dùng np.bincount thay np.add.at → fully vectorized, nhanh ~10× với 1M điểm.
     """
     def _compute_node_density(self, X: np.ndarray, silent: bool = False) -> np.ndarray:
         if not silent:
@@ -374,10 +319,6 @@ class GCBDAlgorithm:
                      f"{(time.time()-t0)*1000:.1f} ms")
         return rho
 
-    """
-    Trừ đóng góp của các điểm X_removed khỏi mảng mật độ rho.
-    Incremental update: O(len(X_removed)) thay vì O(n_total).
-    """
     def _subtract_density(self, rho: np.ndarray, X_removed: np.ndarray) -> np.ndarray:
         if len(X_removed) == 0:
             return rho
@@ -397,10 +338,6 @@ class GCBDAlgorithm:
         )
         return np.maximum(rho_flat.reshape(W, W), 0.0)  # clip âm do float rounding
 
-    """
-    Node gần nhất cho mỗi điểm: làm tròn toạ độ đã scale → index 0-based.
-    (Section 4.4.3: dùng hàm round thay vì tính khoảng cách – O(n))
-    """
     def _nearest_node(self, X: np.ndarray) -> np.ndarray:
         S  = self._scale(X)
         ni = np.clip(np.round(S[:, 0]).astype(int) - 1, 0, self.l)

@@ -37,11 +37,6 @@ def _cluster_color(cid: int, n_total: int) -> str:
         int(rgba[0]*255), int(rgba[1]*255), int(rgba[2]*255)
     )
 
-    """
-    Giao diện đồ họa hỗ trợ hai thuật toán:
-        • CLIQUE  – phân cụm dựa trên ngưỡng mật độ ô cứng (MinPts)
-        • GCBD   – phân cụm dựa trên phát hiện biên lặp (Du & Wu, 2022)
-    """
 class GridClusteringApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -261,8 +256,7 @@ class GridClusteringApp:
             if k <= 0 or std <= 0:
                 return
 
-            avg_density  = n / (k * k)           # mật độ TB toàn lưới
-
+            avg_density  = n / (k * k) # mật độ TB toàn lưới
             # Ước lượng cell_size theo dữ liệu: range ≈ 16 + 4*std (heuristic cho uniform centers [-8,8])
             approx_range = 16.0 + 4.0 * std
             cell_size    = approx_range / k
@@ -282,11 +276,11 @@ class GridClusteringApp:
                 f"Mật độ TB/ô: {avg_density:,.0f}  |  Đỉnh cụm ~{peak_density:,.0f}/ô",
             ]
             if current_xi < suggested:
-                hint_lines.append(f"⚠ Gợi ý MinPts ≥ {suggested:,}")
+                hint_lines.append(f"Gợi ý MinPts ≥ {suggested:,}")
             elif current_xi > int(peak_density * 0.5):
-                hint_lines.append(f"⚠ MinPts quá cao, có thể mất cụm (< {int(peak_density*0.5):,})")
+                hint_lines.append(f"MinPts quá cao, có thể mất cụm (< {int(peak_density*0.5):,})")
             else:
-                hint_lines.append(f"✓ MinPts hợp lý")
+                hint_lines.append(f"MinPts hợp lý")
             self.minpts_hint_var.set("\n".join(hint_lines))
         except (tk.TclError, ValueError, ZeroDivisionError):
             self.minpts_hint_var.set("")
@@ -330,18 +324,18 @@ class GridClusteringApp:
             lines = [f"Cell size={cell_size:.2f}, 1σ≈{nodes_per_cluster:.1f} node"]
 
             if l < l_min:
-                lines.append(f"⚠ l quá nhỏ! Gợi ý l ≥ {l_min}")
+                lines.append(f"l quá nhỏ! Gợi ý l ≥ {l_min}")
             elif cell_size < std * 0.3:
-                lines.append(f"⚠ l hơi lớn, T nên ≥ {T_sug+2} để hội tụ")
+                lines.append(f" l hơi lớn, T nên ≥ {T_sug+2} để hội tụ")
             else:
-                lines.append(f"✓ l hợp lý cho std={std}")
+                lines.append(f"l hợp lý cho std={std}")
 
             if T < T_sug:
-                lines.append(f"⚠ Gợi ý T ≥ {T_sug} (hiện T={T})")
+                lines.append(f"Gợi ý T ≥ {T_sug} (hiện T={T})")
             elif T > 12:
-                lines.append(f"⚠ T={T} có thể ăn mòn core, thử ≤ 12")
+                lines.append(f"T={T} có thể ăn mòn core, thử ≤ 12")
             else:
-                lines.append(f"✓ T={T} ok")
+                lines.append(f"T={T} ok")
 
             self.gcbd_hint_var.set("\n".join(lines))
         except (tk.TclError, ValueError, ZeroDivisionError, ImportError):

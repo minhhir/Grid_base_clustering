@@ -1,17 +1,6 @@
 import numpy as np
 import csv
 
-"""
-Tạo dữ liệu giả gồm các cụm Gaussian phân bố trong mặt phẳng 2D.
-
-Args:
-    n_samples: Tổng số điểm dữ liệu cần tạo.
-    n_centers: Số cụm (tâm) ngẫu nhiên.
-    std: Độ lệch chuẩn của mỗi cụm (kiểm soát độ phân tán).
-
-Returns:
-    Mảng NumPy shape (n_samples, 2).
-"""
 def generate_mock_data(n_samples: int, n_centers: int, std: float) -> np.ndarray:
     rng = np.random.default_rng()
     centers = rng.uniform(-8, 8, size=(n_centers, 2))
