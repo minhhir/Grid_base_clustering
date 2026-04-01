@@ -191,15 +191,16 @@ class GridClusteringApp:
 
         # Điều khiển
         ctrl = self._section(parent, "Điều khiển")
-        self.btn_grid   = self._btn(ctrl, "Xem Lưới trung gian", self.cmd_show_grid, "#E67E22")
-        self.btn_run    = self._btn(ctrl, "Chạy Phân Cụm",       self.cmd_run_algo, "#E74C3C")
-        self.btn_export = self._btn(ctrl, "Xuất kết quả",         self.cmd_export,   "#7F8C8D")
+        self.btn_grid= self._btn(ctrl, "Xem Lưới trung gian", self.cmd_show_grid, "#E67E22")
+        self.btn_run= self._btn(ctrl, "Chạy Phân Cụm", self.cmd_run_algo, "#E74C3C")
+        self.btn_export= self._btn(ctrl, "Xuất kết quả",self.cmd_export,   "#7F8C8D")
 
-        # Trạng thái
-        st = self._section(parent, "Trạng thái")
         self.stat_var = tk.StringVar(value="Sẵn sàng.")
-        tk.Label(st, textvariable=self.stat_var, bg="#2C3E50", fg="#2ECC71",
-                 font=("Courier", 9), justify=tk.LEFT).pack(anchor=tk.W)
+        self.status_bar = tk.Label(parent, textvariable=self.stat_var,
+                                   bg="#1A252F", fg="#2ECC71",
+                                   font=("Segoe UI", 9),
+                                   anchor=tk.W, padx=10, pady=5)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
         self._on_algo_change()
         self._update_minpts_hint()
